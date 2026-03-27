@@ -3,6 +3,10 @@
 AgentHub is a production-style multi-agent AI platform.
 It lets users sign in, choose a specialized agent, submit a task, and watch real-time progress as the backend orchestrates agent execution and writes structured results.
 
+## Demo Video
+
+[Watch the AgentHub demo on YouTube](https://youtu.be/D95j_WdYum0)
+
 ## What This Project Does
 
 AgentHub provides a unified interface for multiple AI agents:
