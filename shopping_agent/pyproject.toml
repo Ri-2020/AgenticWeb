@@ -1,0 +1,37 @@
+[project]
+name = "shopping_agent"
+version = "0.1.0"
+description = "Multi-agent shopping assistant powered by crewAI. Runs as a Cloud Run service triggered by Pub/Sub."
+authors = [{ name = "Your Name", email = "you@example.com" }]
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "crewai[google-genai,litellm,tools]==1.10.1",
+    "fastapi>=0.115.5,<0.116",
+    "google-cloud-pubsub==2.*",
+    "cryptography>=42.0",
+    "uvicorn[standard]>=0.31.1",
+]
+
+[project.optional-dependencies]
+cloud = [
+    "google-cloud-firestore==2.*",
+    "google-cloud-pubsub==2.*",
+    "gunicorn>=21.2",
+]
+
+[project.scripts]
+shopping_agent = "shopping_agent.main:run"
+run_crew = "shopping_agent.main:run"
+train = "shopping_agent.main:train"
+replay = "shopping_agent.main:replay"
+test = "shopping_agent.main:test"
+run_with_trigger = "shopping_agent.main:run_with_trigger"
+serve = "shopping_agent.main:serve"
+listen = "shopping_agent.main:listen"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.crewai]
+type = "crew"

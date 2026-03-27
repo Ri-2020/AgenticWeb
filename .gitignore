@@ -1,0 +1,23 @@
+# OS junk
+.DS_Store
+
+# Python / virtualenv
+__pycache__/
+.venv/
+.env
+.env.local
+*.pyc
+
+# Node / Next.js
+node_modules/
+.next/
+*.log
+
+# Build artifacts
+dist/
+build/
+
+# Credentials
+*.json
+cred_keys/
+uv.lock

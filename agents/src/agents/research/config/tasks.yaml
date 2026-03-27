@@ -1,0 +1,123 @@
+scope_research:
+  description: >
+    Analyze the user's research request: "{user_query}" with focus on {country}.
+
+    Break this into 3-5 specific sub-questions that cover the most important
+    angles of the topic. Consider:
+    - Current state / recent developments
+    - Key stakeholders and their interests
+    - Data and statistics
+    - Risks, challenges, or controversies
+    - Future outlook
+
+    Return a JSON object:
+    {{
+      "topic": "refined topic statement",
+      "sub_questions": ["question 1", "question 2", ...],
+      "angles": ["angle 1", "angle 2", ...]
+    }}
+  expected_output: >
+    A JSON object with the refined topic, sub-questions, and research angles.
+  agent: research_scoper
+
+gather_sources:
+  description: >
+    For each sub-question and angle from the research scope, search the web
+    to find relevant, high-quality sources.
+
+    For each sub-question:
+    - Run at least 2 searches with different phrasings
+    - Prioritize recent sources (last 2 years)
+    - Include a mix: news, research, industry reports, expert opinions
+
+    Return a JSON object:
+    {{
+      "sources": [
+        {{"title": "...", "url": "...", "snippet": "key excerpt or summary"}},
+        ...
+      ]
+    }}
+
+    Find at least 8-12 diverse sources total.
+  expected_output: >
+    A JSON object with a list of sources, each having title, url, and snippet.
+  agent: source_gatherer
+
+analyze_perspectives:
+  description: >
+    Using the gathered sources, identify 2-4 distinct viewpoints or positions
+    on the research topic.
+
+    For each viewpoint:
+    - State the position clearly
+    - Provide supporting evidence from the sources
+    - List which sources support this view
+
+    Return a JSON object:
+    {{
+      "viewpoints": [
+        {{
+          "position": "clear statement of the viewpoint",
+          "supporting_evidence": "key evidence and arguments",
+          "sources": ["source title 1", "source title 2"]
+        }}
+      ]
+    }}
+  expected_output: >
+    A JSON object with an array of viewpoints, each with position, evidence, and sources.
+  agent: perspective_analyst
+
+cross_reference_claims:
+  description: >
+    Review all findings and viewpoints. For each major claim or finding:
+
+    1. Check if multiple sources confirm it
+    2. Note any contradictions between sources
+    3. Assign a confidence level:
+       - "High" = confirmed by 3+ independent sources
+       - "Medium" = confirmed by 2 sources or from one highly credible source
+       - "Low" = single source or contested claim
+
+    Return a JSON object:
+    {{
+      "key_findings": [
+        {{
+          "finding": "concise statement",
+          "confidence": "High/Medium/Low",
+          "detail": "supporting detail and any caveats"
+        }}
+      ]
+    }}
+  expected_output: >
+    A JSON object with verified key findings, each having a confidence level.
+  agent: claim_verifier
+
+synthesize_brief:
+  description: >
+    Create the final research brief by combining all research into a
+    structured output.
+
+    The brief must include:
+    - topic: the refined topic statement
+    - summary: 2-3 paragraph executive summary
+    - key_findings: verified findings with confidence levels
+    - viewpoints: the different perspectives identified
+    - sources: all sources used (with title, url, snippet)
+    - conclusion: a balanced, well-reasoned conclusion
+
+    Return the output as a JSON object matching this schema:
+    {{
+      "topic": "...",
+      "summary": "...",
+      "key_findings": [{{"finding": "...", "confidence": "...", "detail": "..."}}],
+      "viewpoints": [{{"position": "...", "supporting_evidence": "...", "sources": ["..."]}}],
+      "sources": [{{"title": "...", "url": "...", "snippet": "..."}}],
+      "conclusion": "..."
+    }}
+
+    Only include information that was actually found in the research.
+    Never fabricate sources or findings.
+  expected_output: >
+    A complete JSON research brief with topic, summary, findings, viewpoints, sources, and conclusion.
+  output_json: BriefOutput
+  agent: brief_synthesizer

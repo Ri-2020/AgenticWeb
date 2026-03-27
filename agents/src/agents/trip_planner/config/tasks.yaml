@@ -1,0 +1,123 @@
+scope_trip:
+  description: >
+    Analyze the traveler's request: "{user_query}" for {country}.
+
+    Extract structured requirements:
+    - destination (city/region)
+    - duration (number of days)
+    - group size and type (solo, couple, friends, family)
+    - total budget and per-person budget
+    - travel style (backpacker, mid-range, luxury)
+    - specific interests or must-dos
+    - any constraints (dietary, mobility, dates)
+
+    Return a JSON object with all extracted requirements.
+  expected_output: >
+    A JSON object with structured trip requirements.
+  agent: trip_scoper
+
+research_destination:
+  description: >
+    Research the destination thoroughly using web search.
+
+    Search for:
+    - Top attractions and hidden gems
+    - Best time to visit and current weather
+    - Local transportation options and costs
+    - Safety tips and cultural etiquette
+    - Local events or festivals happening soon
+
+    Run multiple searches to gather comprehensive information.
+    Focus on practical, recent information.
+
+    Return a JSON object with categorized destination intelligence.
+  expected_output: >
+    A JSON object with destination research organized by category.
+  agent: destination_researcher
+
+plan_itinerary:
+  description: >
+    Design a day-by-day itinerary based on the trip requirements and
+    destination research.
+
+    For each day, plan:
+    - Morning, afternoon, and evening activities
+    - Specific locations and landmarks
+    - Estimated time at each spot
+    - Estimated cost per activity
+    - Practical tips (best time to visit, what to bring, etc.)
+
+    Consider:
+    - Logical geographic flow (minimize backtracking)
+    - Mix of popular and offbeat experiences
+    - Rest time and flexibility
+    - The group's budget and style
+
+    Return a JSON object with daily plans.
+  expected_output: >
+    A JSON object with a detailed daily itinerary.
+  agent: itinerary_architect
+
+find_stays_and_food:
+  description: >
+    Using web search, find real accommodation and food options.
+
+    For accommodation:
+    - Search for 2-3 options matching the budget and style
+    - Include name, type, price per night, location, booking URL
+    - Explain why each is a good fit
+
+    For food:
+    - Find 5-8 recommended restaurants or food spots
+    - Include cuisine type, price range, and must-try dishes
+    - Mix of meals: breakfast, lunch, dinner, street food
+
+    Only recommend places that actually exist with real URLs.
+  expected_output: >
+    A JSON object with accommodation and food recommendations.
+  agent: stays_and_food_scout
+
+compile_budget:
+  description: >
+    Compile everything into the final trip itinerary with a detailed
+    budget breakdown.
+
+    Budget categories:
+    - Transportation (to destination + local)
+    - Accommodation (total for all nights)
+    - Food & drinks (daily estimate × days)
+    - Activities & entrance fees
+    - Shopping & souvenirs
+    - Emergency buffer (10% of total)
+
+    Return the complete output as a JSON object:
+    {{
+      "destination": "...",
+      "duration": "X days",
+      "travel_style": "...",
+      "summary": "2-3 sentence trip overview",
+      "daily_plans": [
+        {{
+          "day": 1,
+          "title": "Day theme",
+          "activities": [
+            {{"time": "9:00 AM", "activity": "...", "location": "...", "estimated_cost": "...", "tip": "..."}}
+          ]
+        }}
+      ],
+      "accommodations": [
+        {{"name": "...", "type": "...", "price_per_night": "...", "location": "...", "url": "...", "reason": "..."}}
+      ],
+      "food_spots": [
+        {{"name": "...", "cuisine": "...", "price_range": "...", "meal_type": "...", "must_try": "..."}}
+      ],
+      "budget": [
+        {{"category": "...", "estimated_cost": "...", "notes": "..."}}
+      ],
+      "total_estimated_cost": "...",
+      "pro_tips": ["tip 1", "tip 2", ...]
+    }}
+  expected_output: >
+    A complete JSON trip itinerary with daily plans, accommodations, food, budget, and tips.
+  output_json: ItineraryOutput
+  agent: budget_compiler
