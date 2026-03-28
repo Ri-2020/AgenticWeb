@@ -6,7 +6,7 @@ import { User } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db, auth } from "../../../lib/firebase";
 import { onAuthChange } from "../../../lib/auth";
-import { createJob, listenToAgentJobs, getAccessStatus, CloudFunctionError } from "../../../lib/jobs";
+import { createJob, listenToAgentJobs, getAccessStatus, joinWaitlist, CloudFunctionError } from "../../../lib/jobs";
 import { AgentMeta, Job, UserAccessStatus } from "../../../types";
 import Navbar from "../../../components/Navbar";
 import AgentForm from "../../../components/agent/AgentForm";
@@ -25,6 +25,7 @@ import {
   ArrowRight,
   ShieldCheck,
   Hourglass,
+  UserPlus,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -51,6 +52,8 @@ export default function AgentPage() {
   const [error, setError] = useState<string | null>(null);
   const [accessStatus, setAccessStatus] = useState<UserAccessStatus | null>(null);
   const [accessLoading, setAccessLoading] = useState(true);
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const accessChecksEnabled = process.env.NEXT_PUBLIC_ENABLE_ACCESS_STATUS === "true";
 
   useEffect(() => {
@@ -104,6 +107,21 @@ export default function AgentPage() {
     refreshAccessStatus();
   }, [refreshAccessStatus]);
 
+  const handleJoinWaitlist = useCallback(async () => {
+    if (!user || requesting) return;
+    setRequesting(true);
+    setRequestError(null);
+    try {
+      const idToken = await auth.currentUser!.getIdToken();
+      await joinWaitlist(idToken);
+      await refreshAccessStatus();
+    } catch (err) {
+      setRequestError(err instanceof Error ? err.message : "Failed to join waitlist. Please try again.");
+    } finally {
+      setRequesting(false);
+    }
+  }, [user, requesting, refreshAccessStatus]);
+
   const handleSubmit = useCallback(
     async (values: Record<string, string>) => {
       if (!user || !agent) return;
@@ -144,7 +162,7 @@ export default function AgentPage() {
       } catch (err) {
         if (
           err instanceof CloudFunctionError &&
-          (err.code === "WAITLISTED" || err.code === "ACCESS_BLOCKED" || err.code === "DAILY_LIMIT_EXCEEDED")
+          (err.code === "NOT_ON_WAITLIST" || err.code === "WAITLISTED" || err.code === "ACCESS_BLOCKED" || err.code === "DAILY_LIMIT_EXCEEDED")
         ) {
           await refreshAccessStatus();
         }
@@ -235,20 +253,51 @@ export default function AgentPage() {
                 </div>
               )}
 
-              {accessChecksEnabled && !accessLoading && accessStatus && (
+              {/* Status: none — user hasn't joined waitlist yet */}
+              {accessChecksEnabled && !accessLoading && accessStatus?.status === "none" && (
+                <div className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-4 text-sm text-indigo-200">
+                  <p className="mb-3">{accessStatus.message}</p>
+                  <button
+                    onClick={handleJoinWaitlist}
+                    disabled={requesting}
+                    className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60 transition-colors"
+                  >
+                    {requesting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <UserPlus className="h-4 w-4" />
+                    )}
+                    {requesting ? "Joining…" : "Join Waitlist"}
+                  </button>
+                  {requestError && (
+                    <p className="mt-2 text-xs text-red-400">{requestError}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Status: waitlisted — already on waitlist, waiting for approval */}
+              {accessChecksEnabled && !accessLoading && accessStatus?.status === "waitlisted" && (
+                <div className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200">
+                  <div className="flex items-center gap-2">
+                    <Hourglass className="h-4 w-4 shrink-0" />
+                    <span>{accessStatus.message}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Status: allowed — show quota */}
+              {accessChecksEnabled && !accessLoading && accessStatus?.status === "allowed" && (
                 <div
                   className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
-                    accessStatus.status === "allowed" && accessStatus.remainingToday > 0
+                    accessStatus.remainingToday > 0
                       ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
-                      : accessStatus.status === "allowed"
-                        ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                        : "border-indigo-500/30 bg-indigo-500/10 text-indigo-200"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-300"
                   }`}
                 >
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
                     <span className="inline-flex items-center gap-1.5">
                       <ShieldCheck className="h-4 w-4" />
-                      Access: {accessStatus.status}
+                      Access: granted
                     </span>
                     <span className="inline-flex items-center gap-1.5">
                       <Hourglass className="h-4 w-4" />

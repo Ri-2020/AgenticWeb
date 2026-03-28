@@ -69,7 +69,7 @@ export interface Job {
 
 // ── Access Control / Quota ──
 
-export type UserAccessState = "allowed" | "waitlisted" | "blocked";
+export type UserAccessState = "allowed" | "waitlisted" | "blocked" | "none";
 
 export interface UserAccessStatus {
   status: UserAccessState;

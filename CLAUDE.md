@@ -41,10 +41,15 @@ cd frontend
 npm install
 npm run dev                          # Dev server
 npm run build                        # Production build
+npm run lint                         # ESLint
 
 # === Backend (from backend/ directory) ===
 cd backend
 ./deploy.sh                          # Deploy Cloud Function
+
+# === Initial GCP Setup (one-time) ===
+# See SETUP.md for full walkthrough
+./setup_gcp.sh                       # Bootstrap GCP project, Pub/Sub, Firestore, IAM
 ```
 
 ## Architecture
@@ -84,6 +89,7 @@ Agents register themselves in Firestore on server startup (`sync_agent_registry(
 - `agents/src/agents/router.py` — Agent registry, maps agentType → crew class + metadata
 - `agents/src/agents/shared/runtime.py` — Job processing, Firestore updates, step tracking via crewAI `task_callback`
 - `agents/src/agents/shared/api.py` — Unified FastAPI server, Pub/Sub handler, `/agents` endpoint
+- `agents/src/agents/shared/observability.py` — Langtrace init + `run_with_job_trace()` for distributed tracing
 - `agents/src/agents/shared/tools/` — Shared tools (ProductScraperTool, etc.)
 - `agents/src/agents/shopping/crew.py` — Shopping agent crew (5 sequential agents)
 
@@ -106,8 +112,11 @@ Agents register themselves in Firestore on server startup (`sync_agent_registry(
 
 ### Environment Variables
 
-- `GEMINI_API_KEY` / `MODEL` — LLM configuration
+- `MODEL` / `GEMINI_API_KEY` — LLM config (e.g. `gemini/gemini-2.5-flash-lite`); swap to `ollama/qwen3:8b` + `API_BASE=http://127.0.0.1:11434` for local Ollama
 - `SERPER_API_KEY` — Web search API
 - `GCP_PROJECT_ID` — Google Cloud project
 - `CREDENTIAL_SECRET` — Fernet encryption key (must match across backend + agents)
 - `PUBSUB_TOPIC` — Pub/Sub topic name (default: `agent-jobs`)
+- `LANGTRACE_API_KEY` — Observability tracing (optional; no-ops gracefully if absent)
+- `PUBSUB_LISTEN_MODE=pull` + `PUBSUB_SUBSCRIPTION` — Use pull mode for local dev instead of push
+- `AGENT_SYNC_ON_STARTUP=false` — Skip Firestore agent registry sync (useful for local runs)

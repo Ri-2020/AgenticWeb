@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { User } from "firebase/auth";
 import { onAuthChange, signInWithGoogle } from "../lib/auth";
 import { listenToAgents } from "../lib/agents";
-import { AgentMeta } from "../types";
+import { getAccessStatus, joinWaitlist } from "../lib/jobs";
+import { auth } from "../lib/firebase";
+import { AgentMeta, UserAccessStatus } from "../types";
 import Navbar from "../components/Navbar";
 import Link from "next/link";
 import {
@@ -27,6 +29,9 @@ import {
   ArrowDown,
   BookOpen,
   MapPin,
+  UserPlus,
+  Hourglass,
+  Loader2,
 } from "lucide-react";
 
 function GithubIcon({ className }: { className?: string }) {
@@ -53,10 +58,15 @@ const AUTHOR_NAME = process.env.NEXT_PUBLIC_AUTHOR_NAME || "the developer";
 const GITHUB_URL = process.env.NEXT_PUBLIC_GITHUB_URL || "";
 const LINKEDIN_URL = process.env.NEXT_PUBLIC_LINKEDIN_URL || "";
 
+const accessChecksEnabled = process.env.NEXT_PUBLIC_ENABLE_ACCESS_STATUS === "true";
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [agents, setAgents] = useState<AgentMeta[]>([]);
+  const [accessStatus, setAccessStatus] = useState<UserAccessStatus | null>(null);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     const unsubAuth = onAuthChange((u) => {
@@ -69,6 +79,40 @@ export default function Home() {
       unsubAgents();
     };
   }, []);
+
+  const refreshAccess = useCallback(async () => {
+    if (!accessChecksEnabled || !user) {
+      setAccessStatus(null);
+      return;
+    }
+    setAccessLoading(true);
+    try {
+      const idToken = await auth.currentUser!.getIdToken();
+      setAccessStatus(await getAccessStatus(idToken));
+    } catch {
+      setAccessStatus(null);
+    } finally {
+      setAccessLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    refreshAccess();
+  }, [refreshAccess]);
+
+  const handleJoinWaitlist = useCallback(async () => {
+    if (!user || joining) return;
+    setJoining(true);
+    try {
+      const idToken = await auth.currentUser!.getIdToken();
+      await joinWaitlist(idToken);
+      await refreshAccess();
+    } catch {
+      // silently fail — user can retry
+    } finally {
+      setJoining(false);
+    }
+  }, [user, joining, refreshAccess]);
 
   if (authLoading) {
     return (
@@ -123,15 +167,7 @@ export default function Home() {
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in" style={{ animationDelay: "300ms" }}>
-            {user ? (
-              <Link
-                href="/agents"
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all"
-              >
-                Browse Agents
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            ) : (
+            {!user ? (
               <button
                 onClick={() => signInWithGoogle()}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all cursor-pointer"
@@ -139,6 +175,37 @@ export default function Home() {
                 Get Started Free
                 <ArrowRight className="h-4 w-4" />
               </button>
+            ) : accessChecksEnabled && accessLoading ? (
+              <div className="inline-flex items-center gap-2 rounded-xl border border-border px-7 py-3.5 text-sm text-muted-fg">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Checking access…
+              </div>
+            ) : accessChecksEnabled && accessStatus?.status === "none" ? (
+              <button
+                onClick={handleJoinWaitlist}
+                disabled={joining}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all cursor-pointer disabled:opacity-60"
+              >
+                {joining ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <UserPlus className="h-4 w-4" />
+                )}
+                {joining ? "Joining…" : "Join Waitlist"}
+              </button>
+            ) : accessChecksEnabled && accessStatus?.status === "waitlisted" ? (
+              <div className="inline-flex items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-7 py-3.5 text-sm text-indigo-300">
+                <Hourglass className="h-4 w-4" />
+                You&apos;re on the waitlist — we&apos;ll notify you once approved
+              </div>
+            ) : (
+              <Link
+                href="/agents"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all"
+              >
+                Browse Agents
+                <ArrowRight className="h-4 w-4" />
+              </Link>
             )}
             <Link
               href="#how-it-works"
@@ -313,15 +380,7 @@ export default function Home() {
             Sign in with Google and launch your first agent in seconds. No setup required.
           </p>
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
-            {user ? (
-              <Link
-                href="/agents"
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all"
-              >
-                Browse Agents
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            ) : (
+            {!user ? (
               <button
                 onClick={() => signInWithGoogle()}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all cursor-pointer"
@@ -329,6 +388,28 @@ export default function Home() {
                 Sign in with Google
                 <ArrowRight className="h-4 w-4" />
               </button>
+            ) : accessChecksEnabled && accessStatus?.status === "none" ? (
+              <button
+                onClick={handleJoinWaitlist}
+                disabled={joining}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all cursor-pointer disabled:opacity-60"
+              >
+                {joining ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                {joining ? "Joining…" : "Join Waitlist"}
+              </button>
+            ) : accessChecksEnabled && accessStatus?.status === "waitlisted" ? (
+              <div className="inline-flex items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-7 py-3.5 text-sm text-indigo-300">
+                <Hourglass className="h-4 w-4" />
+                On the waitlist
+              </div>
+            ) : (
+              <Link
+                href="/agents"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/35 transition-all"
+              >
+                Browse Agents
+                <ArrowRight className="h-4 w-4" />
+              </Link>
             )}
             <Link
               href="/about"

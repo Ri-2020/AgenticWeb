@@ -12,6 +12,7 @@ import { db } from "./firebase";
 import { Job, UserAccessStatus, UserAccessState } from "../types";
 
 const CLOUD_FUNCTION_URL = process.env.NEXT_PUBLIC_CREATE_JOB_URL!;
+const REQUEST_ACCESS_URL = process.env.NEXT_PUBLIC_REQUEST_ACCESS_URL!;
 
 export class CloudFunctionError extends Error {
   status: number;
@@ -87,7 +88,7 @@ export async function saveGeminiKey(idToken: string, apiKey: string): Promise<vo
 
 export async function getAccessStatus(idToken: string): Promise<UserAccessStatus> {
   const data = await callCloudFunction<Record<string, unknown>>(idToken, { action: "access_status" });
-  const status = (data.status as UserAccessState) || "waitlisted";
+  const status = (data.status as UserAccessState) || "none";
   return {
     status,
     jobsToday: Number(data.jobsToday || 0),
@@ -97,6 +98,22 @@ export async function getAccessStatus(idToken: string): Promise<UserAccessStatus
     allowedAt: (data.allowedAt as string) || null,
     message: (data.message as string) || "",
   };
+}
+
+export async function joinWaitlist(idToken: string): Promise<void> {
+  const res = await fetch(REQUEST_ACCESS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({}),
+  });
+  const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const message = (payload.error as string) || "Failed to join waitlist";
+    throw new CloudFunctionError(message, res.status, payload.code as string | undefined, payload);
+  }
 }
 
 export function listenToJob(jobId: string, callback: (job: Job | null) => void): Unsubscribe {

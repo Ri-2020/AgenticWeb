@@ -34,6 +34,7 @@ publisher = pubsub_v1.PublisherClient()
 ACCESS_ALLOWED = "allowed"
 ACCESS_WAITLISTED = "waitlisted"
 ACCESS_BLOCKED = "blocked"
+ACCESS_NONE = "none"
 KNOWN_ACCESS_STATUSES = {ACCESS_ALLOWED, ACCESS_WAITLISTED, ACCESS_BLOCKED}
 
 
@@ -83,57 +84,20 @@ def claims_profile(claims: dict) -> dict[str, str]:
     }
 
 
-def ensure_access_record(user_id: str, claims: dict) -> dict:
-    """Ensure the user exists in access collection. New users are waitlisted."""
+def get_access_record(user_id: str) -> dict | None:
+    """Read the user's access record. Returns None if user hasn't joined the waitlist."""
     ref = db.collection(USER_ACCESS_COLLECTION).document(user_id)
     snap = ref.get()
-    now = utc_now()
-    profile = claims_profile(claims)
 
     if not snap.exists:
-        data = {
-            "userId": user_id,
-            "status": ACCESS_WAITLISTED,
-            "dailyLimit": DAILY_JOB_LIMIT,
-            "email": profile["email"],
-            "displayName": profile["displayName"],
-            "photoURL": profile["photoURL"],
-            "waitlistedAt": now,
-            "lastSeenAt": now,
-            "createdAt": now,
-            "updatedAt": now,
-        }
-        ref.set(data)
-        return data
+        return None
 
     data = snap.to_dict() or {}
-    updates: dict[str, Any] = {
-        "lastSeenAt": now,
-        "updatedAt": now,
-    }
-
-    status = normalize_access_status(data.get("status"))
-    if status != data.get("status"):
-        updates["status"] = status
-    if status == ACCESS_WAITLISTED and not data.get("waitlistedAt"):
-        updates["waitlistedAt"] = now
-    if "dailyLimit" not in data:
-        updates["dailyLimit"] = DAILY_JOB_LIMIT
-
-    if profile["email"] and not data.get("email"):
-        updates["email"] = profile["email"]
-    if profile["displayName"] and not data.get("displayName"):
-        updates["displayName"] = profile["displayName"]
-    if profile["photoURL"] and not data.get("photoURL"):
-        updates["photoURL"] = profile["photoURL"]
-
-    if updates:
-        ref.set(updates, merge=True)
-
-    merged = dict(data)
-    merged.update(updates)
-    merged["status"] = normalize_access_status(merged.get("status"))
-    return merged
+    now = utc_now()
+    ref.set({"lastSeenAt": now, "updatedAt": now}, merge=True)
+    data["lastSeenAt"] = now
+    data["updatedAt"] = now
+    return data
 
 
 def get_jobs_today(user_id: str, now: datetime | None = None) -> int:
@@ -146,8 +110,20 @@ def get_jobs_today(user_id: str, now: datetime | None = None) -> int:
     return max(0, as_int(data.get("jobsCount"), 0))
 
 
-def build_access_payload(access: dict, user_id: str, now: datetime | None = None) -> dict:
+def build_access_payload(access: dict | None, user_id: str, now: datetime | None = None) -> dict:
     now = now or utc_now()
+
+    if access is None:
+        return {
+            "status": ACCESS_NONE,
+            "jobsToday": 0,
+            "dailyLimit": DAILY_JOB_LIMIT,
+            "remainingToday": 0,
+            "waitlistedAt": None,
+            "allowedAt": None,
+            "message": "Join the waitlist to request access.",
+        }
+
     status = normalize_access_status(access.get("status"))
     daily_limit = max(1, as_int(access.get("dailyLimit"), DAILY_JOB_LIMIT))
     jobs_today = get_jobs_today(user_id, now)
@@ -161,7 +137,7 @@ def build_access_payload(access: dict, user_id: str, now: datetime | None = None
     elif status == ACCESS_BLOCKED:
         message = "Access blocked. Contact support."
     else:
-        message = "You are on the waitlist. We will grant access once approved."
+        message = "You're on the waitlist. We'll notify you once you're approved."
 
     return {
         "status": status,
@@ -319,7 +295,7 @@ def create_job(request: Request):
 
     action = body.get("action", "create_job")
 
-    access_record = ensure_access_record(user_id, claims)
+    access_record = get_access_record(user_id)
     access_payload = build_access_payload(access_record, user_id)
 
     if action == "access_status":
@@ -341,6 +317,17 @@ def create_job(request: Request):
 
     if not user_query:
         return (jsonify({"error": "Missing 'query' field"}), 400, headers)
+
+    if access_payload["status"] == ACCESS_NONE:
+        return (
+            jsonify({
+                "error": "Join the waitlist to request access.",
+                "code": "NOT_ON_WAITLIST",
+                "access": access_payload,
+            }),
+            403,
+            headers,
+        )
 
     if access_payload["status"] != ACCESS_ALLOWED:
         code = "WAITLISTED" if access_payload["status"] == ACCESS_WAITLISTED else "ACCESS_BLOCKED"
@@ -366,7 +353,7 @@ def create_job(request: Request):
         )
 
     user_key_enc = get_user_key(user_id)
-    daily_limit = max(1, as_int(access_record.get("dailyLimit"), DAILY_JOB_LIMIT))
+    daily_limit = max(1, as_int((access_record or {}).get("dailyLimit"), DAILY_JOB_LIMIT))
 
     try:
         job_id, jobs_today_after = create_job_and_increment_usage(

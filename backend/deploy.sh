@@ -11,14 +11,32 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Load .env files from each function directory (if they exist).
+# Values already set in the shell take precedence.
+for envfile in ./create_job/.env ./request_access/.env; do
+  [ -f "$envfile" ] || continue
+  while IFS='=' read -r key value; do
+    # Skip comments and blank lines
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "$key" ]] && continue
+    key=$(echo "$key" | xargs)           # trim whitespace
+    value=$(echo "$value" | xargs)
+    # Only set if not already in environment
+    if [ -z "${!key:-}" ]; then
+      export "$key=$value"
+    fi
+  done < "$envfile"
+done
+
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 REGION="${GCP_REGION:-asia-south1}"
-FUNCTION_NAME="create_job"
 PUBSUB_TOPIC="${PUBSUB_TOPIC:-agent-jobs}"
 CREDENTIAL_SECRET="${CREDENTIAL_SECRET:-}"
 DAILY_JOB_LIMIT="${DAILY_JOB_LIMIT:-3}"
 USER_ACCESS_COLLECTION="${USER_ACCESS_COLLECTION:-user_access}"
 DAILY_USAGE_COLLECTION="${DAILY_USAGE_COLLECTION:-user_daily_usage}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 
 if [ -z "$PROJECT_ID" ]; then
   echo "ERROR: No GCP project set. Run: gcloud config set project YOUR_PROJECT_ID"
@@ -37,8 +55,9 @@ if [ -n "$FRONTEND_URL" ]; then
   ALLOWED_ORIGINS="$ALLOWED_ORIGINS,$FRONTEND_URL"
 fi
 
-echo "==> Deploying Cloud Function: $FUNCTION_NAME..."
-gcloud functions deploy "$FUNCTION_NAME" \
+# ── Deploy create_job ──────────────────────────────────────────────────────────
+echo "==> Deploying Cloud Function: create_job..."
+gcloud functions deploy create_job \
   --gen2 \
   --region "$REGION" \
   --runtime python312 \
@@ -50,9 +69,30 @@ gcloud functions deploy "$FUNCTION_NAME" \
   --timeout 30s \
   --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,PUBSUB_TOPIC=$PUBSUB_TOPIC,ALLOWED_ORIGINS=$ALLOWED_ORIGINS,CREDENTIAL_SECRET=$CREDENTIAL_SECRET,DAILY_JOB_LIMIT=$DAILY_JOB_LIMIT,USER_ACCESS_COLLECTION=$USER_ACCESS_COLLECTION,DAILY_USAGE_COLLECTION=$DAILY_USAGE_COLLECTION"
 
+CREATE_JOB_URL=$(gcloud functions describe create_job --gen2 --region "$REGION" --format="value(serviceConfig.uri)")
+echo "    URL: $CREATE_JOB_URL"
+
+# ── Deploy request_access ──────────────────────────────────────────────────────
 echo ""
-echo "==> Cloud Function deployed!"
-FUNCTION_URL=$(gcloud functions describe "$FUNCTION_NAME" --gen2 --region "$REGION" --format="value(serviceConfig.uri)")
-echo "    URL: $FUNCTION_URL"
+echo "==> Deploying Cloud Function: request_access..."
+gcloud functions deploy request_access \
+  --gen2 \
+  --region "$REGION" \
+  --runtime python312 \
+  --source ./request_access \
+  --entry-point request_access \
+  --trigger-http \
+  --allow-unauthenticated \
+  --memory 256Mi \
+  --timeout 30s \
+  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=$REGION,ALLOWED_ORIGINS=$ALLOWED_ORIGINS,USER_ACCESS_COLLECTION=$USER_ACCESS_COLLECTION,TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID"
+
+REQUEST_ACCESS_URL=$(gcloud functions describe request_access --gen2 --region "$REGION" --format="value(serviceConfig.uri)")
+echo "    URL: $REQUEST_ACCESS_URL"
+
 echo ""
-echo "NOTE: Set this URL as NEXT_PUBLIC_CREATE_JOB_URL in frontend/.env.local"
+echo "==> Both functions deployed!"
+echo ""
+echo "NOTE: Set these in frontend/.env.local:"
+echo "  NEXT_PUBLIC_CREATE_JOB_URL=$CREATE_JOB_URL"
+echo "  NEXT_PUBLIC_REQUEST_ACCESS_URL=$REQUEST_ACCESS_URL"
