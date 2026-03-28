@@ -50,7 +50,7 @@ if [ "$MODE" = "cloud" ]; then
     --cpu 2 \
     --min-instances 0 \
     --max-instances 5 \
-    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GEMINI_API_KEY=$GEMINI_API_KEY,SERPER_API_KEY=$SERPER_API_KEY,MODEL=$MODEL,PUBSUB_LISTEN_MODE=push,CREDENTIAL_SECRET=$CREDENTIAL_SECRET"
+    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,GEMINI_API_KEY=$GEMINI_API_KEY,SERPER_API_KEY=$SERPER_API_KEY,MODEL=$MODEL,PUBSUB_LISTEN_MODE=push,CREDENTIAL_SECRET=$CREDENTIAL_SECRET,AGENT_SYNC_ON_STARTUP=true"
 
   AGENT_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format="value(status.url)")
 
@@ -89,6 +89,30 @@ if [ "$MODE" = "local" ]; then
   export GCP_PROJECT_ID="$PROJECT_ID"
   export PUBSUB_LISTEN_MODE="pull"
   export PUBSUB_SUBSCRIPTION="$LOCAL_SUBSCRIPTION_NAME"
+  export AGENT_SYNC_ON_STARTUP="${AGENT_SYNC_ON_STARTUP:-false}"
+
+  # Prefer project service-account credentials for local pull mode.
+  # This avoids depending on gcloud user ADC permissions.
+  if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+    CRED_KEYS_DIR="$SCRIPT_DIR/../cred_keys"
+    CANDIDATE_KEY="$CRED_KEYS_DIR/${PROJECT_ID}-developer.json"
+    if [ -f "$CANDIDATE_KEY" ]; then
+      export GOOGLE_APPLICATION_CREDENTIALS="$CANDIDATE_KEY"
+      echo "==> Using service account credentials: $(basename "$CANDIDATE_KEY")"
+    else
+      for key_file in "$CRED_KEYS_DIR"/"${PROJECT_ID}"-*.json; do
+        if [ -f "$key_file" ]; then
+          export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+          echo "==> Using service account credentials: $(basename "$key_file")"
+          break
+        fi
+      done
+    fi
+  fi
+
+  if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+    echo "==> No local service-account key found in ../cred_keys; falling back to gcloud ADC."
+  fi
   uv run listen
   exit 0
 fi

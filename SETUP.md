@@ -108,11 +108,14 @@ gcloud config set functions/region asia-south1
 MODEL=gemini/gemini-2.5-flash-lite
 GEMINI_API_KEY=<your_gemini_api_key>
 SERPER_API_KEY=<your_serper_api_key>
+LANGTRACE_API_KEY=<your_langtrace_api_key>
+# LANGTRACE_SERVICE_NAME=agent-platform
 GCP_PROJECT_ID=PROJECT_ID
 CREDENTIAL_SECRET=<at_least_32_random_chars>
 PUBSUB_TOPIC=agent-jobs
 PUBSUB_LISTEN_MODE=pull
 PUBSUB_SUBSCRIPTION=agent-jobs-local
+AGENT_SYNC_ON_STARTUP=false
 ```
 
 ### `frontend/.env.local`

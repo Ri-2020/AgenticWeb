@@ -14,6 +14,8 @@ from typing import Any, Callable
 
 from cryptography.fernet import Fernet
 
+from agents.shared.observability import init_langtrace, run_with_job_trace
+
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pysbd")
 
 logger = logging.getLogger(__name__)
@@ -142,6 +144,58 @@ def _init_step_state(job_id: str, step_names: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cost tracking
+# ---------------------------------------------------------------------------
+
+# Gemini pricing (USD per 1M tokens) — update as pricing changes.
+_GEMINI_COST_TABLE: dict[str, dict[str, float]] = {
+    "gemini-2.5-pro":           {"input": 1.25,  "output": 10.0},
+    "gemini-2.5-flash":         {"input": 0.15,  "output": 0.60},
+    "gemini-2.5-flash-lite":    {"input": 0.10,  "output": 0.40},
+    "gemini-2.0-flash":         {"input": 0.10,  "output": 0.40},
+    "gemini-2.0-flash-lite":    {"input": 0.075, "output": 0.30},
+    "gemini-1.5-pro":           {"input": 1.25,  "output": 5.00},
+    "gemini-1.5-flash":         {"input": 0.075, "output": 0.30},
+}
+
+
+def _record_usage_metrics(usage: Any) -> None:
+    """Write token counts and estimated cost onto the current OTel span."""
+    if usage is None:
+        return
+    try:
+        from opentelemetry import trace as otel_trace
+        span = otel_trace.get_current_span()
+        if not span.is_recording():
+            return
+
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens)
+        requests = getattr(usage, "successful_requests", 0) or 0
+
+        span.set_attribute("llm.usage.prompt_tokens", prompt_tokens)
+        span.set_attribute("llm.usage.completion_tokens", completion_tokens)
+        span.set_attribute("llm.usage.total_tokens", total_tokens)
+        span.set_attribute("llm.usage.successful_requests", requests)
+
+        # Estimate cost using the active model.
+        model_env = (os.environ.get("MODEL") or "").strip()
+        # Strip provider prefix e.g. "gemini/gemini-2.5-flash" → "gemini-2.5-flash"
+        model_key = model_env.split("/")[-1].lower() if model_env else ""
+        pricing = _GEMINI_COST_TABLE.get(model_key)
+        if pricing:
+            cost = (
+                prompt_tokens * pricing["input"] / 1_000_000
+                + completion_tokens * pricing["output"] / 1_000_000
+            )
+            span.set_attribute("llm.usage.cost", round(cost, 8))
+            span.set_attribute("llm.usage.cost_currency", "USD")
+    except Exception:
+        pass  # Never let observability crash the agent
+
+
+# ---------------------------------------------------------------------------
 # Agent execution
 # ---------------------------------------------------------------------------
 
@@ -152,6 +206,8 @@ def run_agent(
     api_key_override: str | None = None,
 ) -> dict[str, Any]:
     """Run the specified agent crew and return normalised JSON results."""
+    # Initialize tracing before importing router/crews so LLM calls can be instrumented.
+    init_langtrace()
     from agents.router import get_agent_info
 
     info = get_agent_info(agent_type)
@@ -162,6 +218,7 @@ def run_agent(
     step_names = info["metadata"].get("steps", [])
 
     original_key = os.environ.get("GEMINI_API_KEY")
+    usage = None
     try:
         if api_key_override:
             os.environ["GEMINI_API_KEY"] = api_key_override
@@ -176,12 +233,15 @@ def run_agent(
         instance._task_callback = task_callback
         crew_obj = instance.crew()
         result = crew_obj.kickoff(inputs=inputs)
+        usage = getattr(crew_obj, "usage_metrics", None)
     finally:
         if api_key_override is not None:
             if original_key is not None:
                 os.environ["GEMINI_API_KEY"] = original_key
             else:
                 os.environ.pop("GEMINI_API_KEY", None)
+
+    _record_usage_metrics(usage)
 
     if hasattr(result, "json_dict") and result.json_dict:
         return result.json_dict
@@ -221,25 +281,40 @@ def process_job_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     logger.info("Processing job %s [%s]: %r (%s)", job_id, agent_type, query, country)
 
+    # Initialize tracing lazily during job execution (not server startup).
+    init_langtrace()
+
     # Get step names for this agent
     from agents.router import get_agent_info
     info = get_agent_info(agent_type)
     step_names = info["metadata"].get("steps", []) if info else []
 
-    # Set initial step state
-    _init_step_state(job_id, step_names)
+    def _run_job() -> dict[str, Any]:
+        # Set initial step state after trace context is established.
+        _init_step_state(job_id, step_names)
+        try:
+            user_api_key = decrypt_key(user_key_enc)
+            inputs = {"user_query": query, "country": country}
+            results = run_agent(agent_type, inputs, job_id=job_id, api_key_override=user_api_key)
+            update_job(job_id, status="completed", results=results, error=None)
+            logger.info("Job %s completed successfully", job_id)
+            return {"status": "completed", "jobId": job_id, "results": results}
+        except Exception as exc:
+            logger.error("Job %s failed: %s", job_id, traceback.format_exc())
+            update_job(job_id, status="failed", error=str(exc))
+            return {"status": "failed", "jobId": job_id, "error": str(exc)}
 
-    try:
-        user_api_key = decrypt_key(user_key_enc)
-        inputs = {"user_query": query, "country": country}
-        results = run_agent(agent_type, inputs, job_id=job_id, api_key_override=user_api_key)
-        update_job(job_id, status="completed", results=results, error=None)
-        logger.info("Job %s completed successfully", job_id)
-        return {"status": "completed", "jobId": job_id, "results": results}
-    except Exception as exc:
-        logger.error("Job %s failed: %s", job_id, traceback.format_exc())
-        update_job(job_id, status="failed", error=str(exc))
-        return {"status": "failed", "jobId": job_id, "error": str(exc)}
+    trace_attrs = {
+        "job.id": job_id,
+        "agent.type": agent_type,
+        "job.country": country,
+    }
+    return run_with_job_trace(
+        span_name=f"agent_job.{agent_type}",
+        attributes=trace_attrs,
+        fn=_run_job,
+        session_id=job_id,
+    )
 
 
 # ---------------------------------------------------------------------------

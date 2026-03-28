@@ -7,6 +7,14 @@ import logging
 import os
 import threading
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Langtrace MUST be initialized before any crewAI imports.
+from agents.shared.observability import init_langtrace
+init_langtrace()
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -40,9 +48,9 @@ def _start_pull_listener() -> None:
         return
 
     project_id = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-    subscription_name = os.environ.get("PUBSUB_SUBSCRIPTION", "").strip()
-    if not project_id or not subscription_name:
-        logger.warning("Pull listener needs GCP_PROJECT_ID and PUBSUB_SUBSCRIPTION.")
+    subscription_name = os.environ.get("PUBSUB_SUBSCRIPTION", "agent-jobs-local").strip()
+    if not project_id:
+        logger.warning("Pull listener needs GCP_PROJECT_ID.")
         return
 
     def _run() -> None:
@@ -78,11 +86,19 @@ def _start_pull_listener() -> None:
 async def startup_event() -> None:
     if _should_start_pull_listener():
         _start_pull_listener()
-    # Sync agent registry to Firestore on startup
-    try:
-        sync_agent_registry()
-    except Exception:
-        logger.exception("Failed to sync agent registry on startup.")
+    sync_on_startup = os.environ.get("AGENT_SYNC_ON_STARTUP", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if sync_on_startup:
+        try:
+            sync_agent_registry()
+        except Exception:
+            logger.exception("Failed to sync agent registry on startup.")
+    else:
+        logger.info("Skipping agent registry sync on startup.")
 
 
 @app.get("/health")
