@@ -43,6 +43,11 @@ if [ "$MODE" = "firebase" ]; then
       "firebase.json",
       "**/.*",
       "**/node_modules/**"
+    ],
+    "cleanUrls": true,
+    "rewrites": [
+      { "source": "/jobs/**", "destination": "/jobs/__ph__.html" },
+      { "source": "/agents/**", "destination": "/agents/__ph__.html" }
     ]
   }
 }
