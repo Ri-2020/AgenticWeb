@@ -90,7 +90,6 @@ agentic_web/
 │   ├── src/agents/           # Multi-agent runtime + agent modules
 │   ├── register_agents.py    # Seeds Firestore agents collection
 │   └── deploy.sh             # Cloud Run / local pull listener modes
-├── shopping_agent/           # Legacy single-agent module (optional)
 ├── SETUP.md                  # Full infra setup walkthrough
 └── setup_gcp.sh              # Initial project bootstrap helper
 ```
@@ -115,11 +114,15 @@ uv sync
 
 Make sure your `.env` files are configured (`frontend/.env.local`, `agents/.env`, backend env vars).
 
-## Deployment Order
+## Deployment
 
-1. Deploy backend Cloud Function (`backend/deploy.sh`)
-2. Deploy agent runtime (`agents/deploy.sh cloud`)
-3. Deploy frontend (`frontend/deploy.sh`)
+Deployment is fully automated via GitHub Actions CI/CD on every push to `main`.
+
+- `frontend/` changes → builds Next.js static export, deploys to Firebase Hosting
+- `backend/` changes → deploys Cloud Functions Gen2
+- `agents/` changes → builds Docker image, pushes to Artifact Registry, deploys to Cloud Run
+
+See [`.github/CICD.md`](./.github/CICD.md) for the full pipeline breakdown and secrets setup.
 
 ## Access Control and Quota Notes
 

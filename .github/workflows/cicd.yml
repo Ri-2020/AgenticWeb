@@ -1,0 +1,380 @@
+# ============================================================
+# AgentHub — Production CI/CD Pipeline
+# ============================================================
+# Triggers on push to main. Path-based filtering ensures only
+# the changed component(s) are deployed.
+#
+# Jobs (all independent, run in parallel after change detection):
+#   deploy-frontend  → Firebase Hosting (Next.js static export)
+#   deploy-backend   → Cloud Functions Gen2 (create_job + request_access)
+#   deploy-agents    → Cloud Run (unified agent-platform)
+#
+# Architecture note:
+#   All agents (shopping, research, trip_planner) share ONE Docker
+#   image deployed as one Cloud Run service. Agent registration is
+#   handled by AGENT_SYNC_ON_STARTUP=true on container startup.
+#   See bottom of this file for the per-agent matrix variant.
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   GCP_PROJECT_ID                  e.g. "notesa"
+#   GCP_SA_KEY                      Full service account JSON (roles below)
+#   FIREBASE_SERVICE_ACCOUNT        Firebase Hosting deploy SA JSON
+#   GCP_REGION                      e.g. "asia-south1"
+#   AR_REPO                         Artifact Registry repo, e.g. "agenthub"
+#   GEMINI_API_KEY
+#   SERPER_API_KEY
+#   MODEL                           e.g. "gemini/gemini-2.5-flash-lite"
+#   CREDENTIAL_SECRET               Fernet encryption key
+#   DAILY_JOB_LIMIT                 e.g. "3"
+#   ALLOWED_ORIGINS                 Comma-separated, e.g. "https://notesa.web.app"
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_CHAT_ID
+#   NEXT_PUBLIC_FIREBASE_API_KEY
+#   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+#   NEXT_PUBLIC_FIREBASE_PROJECT_ID
+#   NEXT_PUBLIC_FIREBASE_APP_ID
+#   NEXT_PUBLIC_CREATE_JOB_URL      Cloud Function URL (set after first deploy)
+#   NEXT_PUBLIC_REQUEST_ACCESS_URL  Cloud Function URL (set after first deploy)
+#   LANGTRACE_API_KEY               (optional)
+#
+# GCP service account minimum roles:
+#   Cloud Run Admin, Cloud Functions Admin, Cloud Build Editor,
+#   Artifact Registry Writer, Pub/Sub Editor, Firebase Admin,
+#   Service Account User
+# ============================================================
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger
+
+env:
+  PROJECT_ID:   ${{ secrets.GCP_PROJECT_ID }}
+  REGION:       ${{ secrets.GCP_REGION }}
+  AR_REPO:      ${{ secrets.AR_REPO }}
+  SERVICE_NAME: agent-platform
+  PUBSUB_TOPIC: agent-jobs
+  PUSH_SUB:     agent-jobs-push
+
+# ─── 1. DETECT CHANGED PATHS ─────────────────────────────────────────────────
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend:  ${{ steps.filter.outputs.backend }}
+      agents:   ${{ steps.filter.outputs.agents }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Path filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+            agents:
+              - 'agents/**'
+
+# ─── 2. FRONTEND → Firebase Hosting ─────────────────────────────────────────
+  deploy-frontend:
+    name: Deploy frontend → Firebase Hosting
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static export
+        env:
+          NEXT_OUTPUT_MODE:                  export
+          NEXT_PUBLIC_FIREBASE_API_KEY:      ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:  ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID:   ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID:       ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+          NEXT_PUBLIC_CREATE_JOB_URL:        ${{ secrets.NEXT_PUBLIC_CREATE_JOB_URL }}
+          NEXT_PUBLIC_REQUEST_ACCESS_URL:    ${{ secrets.NEXT_PUBLIC_REQUEST_ACCESS_URL }}
+        run: npm run build
+
+      # firebase.json is at frontend/ level (already present in repo)
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken:              ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId:              ${{ env.PROJECT_ID }}
+          channelId:              live
+          entryPoint:             ./frontend   # directory containing firebase.json
+
+# ─── 3. BACKEND → Cloud Functions Gen2 ──────────────────────────────────────
+  deploy-backend:
+    name: Deploy backend → Cloud Functions Gen2
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure Pub/Sub topic exists
+        run: |
+          gcloud pubsub topics describe ${{ env.PUBSUB_TOPIC }} \
+            --project=${{ env.PROJECT_ID }} >/dev/null 2>&1 \
+          || gcloud pubsub topics create ${{ env.PUBSUB_TOPIC }} \
+               --project=${{ env.PROJECT_ID }}
+
+      # ── create_job ──────────────────────────────────────────────
+      - name: Deploy create_job
+        run: |
+          gcloud functions deploy create_job \
+            --gen2 \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --runtime=python312 \
+            --source=./backend/create_job \
+            --entry-point=create_job \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=256Mi \
+            --timeout=30s \
+            --set-env-vars="^|^GCP_PROJECT_ID=${{ env.PROJECT_ID }}\
+          |PUBSUB_TOPIC=${{ env.PUBSUB_TOPIC }}\
+          |CREDENTIAL_SECRET=${{ secrets.CREDENTIAL_SECRET }}\
+          |DAILY_JOB_LIMIT=${{ secrets.DAILY_JOB_LIMIT }}\
+          |ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}\
+          |USER_ACCESS_COLLECTION=user_access\
+          |DAILY_USAGE_COLLECTION=user_daily_usage"
+
+      - name: Print create_job URL
+        run: |
+          URL=$(gcloud functions describe create_job \
+                  --gen2 \
+                  --project=${{ env.PROJECT_ID }} \
+                  --region=${{ env.REGION }} \
+                  --format="value(serviceConfig.uri)")
+          echo "create_job URL: $URL"
+          echo "⚠  Update NEXT_PUBLIC_CREATE_JOB_URL secret if this changed"
+
+      # ── request_access ──────────────────────────────────────────
+      - name: Deploy request_access
+        run: |
+          gcloud functions deploy request_access \
+            --gen2 \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --runtime=python312 \
+            --source=./backend/request_access \
+            --entry-point=request_access \
+            --trigger-http \
+            --allow-unauthenticated \
+            --memory=256Mi \
+            --timeout=30s \
+            --set-env-vars="^|^GCP_PROJECT_ID=${{ env.PROJECT_ID }}\
+          |GCP_REGION=${{ env.REGION }}\
+          |ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}\
+          |USER_ACCESS_COLLECTION=user_access\
+          |TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}\
+          |TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"
+
+      - name: Print request_access URL
+        run: |
+          URL=$(gcloud functions describe request_access \
+                  --gen2 \
+                  --project=${{ env.PROJECT_ID }} \
+                  --region=${{ env.REGION }} \
+                  --format="value(serviceConfig.uri)")
+          echo "request_access URL: $URL"
+          echo "⚠  Update NEXT_PUBLIC_REQUEST_ACCESS_URL secret if this changed"
+
+# ─── 4. AGENTS → Cloud Run (unified agent-platform) ─────────────────────────
+  deploy-agents:
+    name: Deploy agents → Cloud Run
+    needs: changes
+    if: needs.changes.outputs.agents == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Configure Docker to push to Artifact Registry
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # Ensure Artifact Registry repository exists
+      - name: Ensure Artifact Registry repo
+        run: |
+          gcloud artifacts repositories describe ${{ env.AR_REPO }} \
+            --project=${{ env.PROJECT_ID }} \
+            --location=${{ env.REGION }} >/dev/null 2>&1 \
+          || gcloud artifacts repositories create ${{ env.AR_REPO }} \
+               --project=${{ env.PROJECT_ID }} \
+               --repository-format=docker \
+               --location=${{ env.REGION }} \
+               --description="AgentHub Docker images"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push — uses GitHub Actions cache for Docker layers
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agents
+          push: true
+          # Tag with commit SHA (immutable) + latest (floating)
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      # Deploy the immutable SHA-tagged image (never use :latest in deploys)
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image="$IMAGE" \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --no-allow-unauthenticated \
+            --memory=2Gi \
+            --cpu=2 \
+            --timeout=600 \
+            --min-instances=0 \
+            --max-instances=5 \
+            --set-env-vars="^|^GCP_PROJECT_ID=${{ env.PROJECT_ID }}\
+          |GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}\
+          |SERPER_API_KEY=${{ secrets.SERPER_API_KEY }}\
+          |MODEL=${{ secrets.MODEL }}\
+          |PUBSUB_LISTEN_MODE=push\
+          |CREDENTIAL_SECRET=${{ secrets.CREDENTIAL_SECRET }}\
+          |AGENT_SYNC_ON_STARTUP=true\
+          |LANGTRACE_API_KEY=${{ secrets.LANGTRACE_API_KEY }}"
+
+      # Rebuild Pub/Sub push subscription pointing at the new revision
+      - name: Recreate Pub/Sub push subscription
+        run: |
+          AGENT_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --format="value(status.url)")
+
+          SA_EMAIL="${{ env.PROJECT_ID }}@appspot.gserviceaccount.com"
+
+          # Delete old subscription (idempotent — ignore errors)
+          gcloud pubsub subscriptions delete ${{ env.PUSH_SUB }} \
+            --project=${{ env.PROJECT_ID }} --quiet 2>/dev/null || true
+
+          gcloud pubsub subscriptions create ${{ env.PUSH_SUB }} \
+            --project=${{ env.PROJECT_ID }} \
+            --topic=${{ env.PUBSUB_TOPIC }} \
+            --push-endpoint="$AGENT_URL" \
+            --push-auth-service-account="$SA_EMAIL" \
+            --ack-deadline=600 \
+            --message-retention-duration=1h
+
+          echo "Agent platform URL: $AGENT_URL"
+
+      # ── Agent registration ──────────────────────────────────────
+      # AGENT_SYNC_ON_STARTUP=true (above) makes the platform write
+      # its own registry to Firestore on cold start, so this step is
+      # a safety net / CI verification, not the primary mechanism.
+      - name: Setup Node.js for registration script
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install registration script dependencies
+        working-directory: scripts
+        run: npm ci
+
+      - name: Register / update agents in Firestore
+        working-directory: scripts
+        env:
+          GCP_SA_KEY:       ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID:   ${{ env.PROJECT_ID }}
+          CLOUD_RUN_REGION: ${{ env.REGION }}
+          SERVICE_NAME:     ${{ env.SERVICE_NAME }}
+        run: node register-agents.js
+
+# ─── VARIANT: Per-agent matrix (for future use) ──────────────────────────────
+# Uncomment and adapt when you split agents into separate Cloud Run services.
+# Requires each agent to have its own Dockerfile at agents/src/agents/<id>/Dockerfile.
+#
+# detect-changed-agents:
+#   runs-on: ubuntu-latest
+#   outputs:
+#     matrix: ${{ steps.build-matrix.outputs.matrix }}
+#   steps:
+#     - uses: actions/checkout@v4
+#       with: { fetch-depth: 2 }
+#     - id: build-matrix
+#       run: |
+#         CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'agents/src/agents/*' \
+#           | grep -oP 'agents/src/agents/\K[^/]+' \
+#           | grep -v 'shared\|router\|__' \
+#           | sort -u | jq -Rcs 'split("\n")[:-1]')
+#         echo "matrix={\"agent\":$CHANGED}" >> $GITHUB_OUTPUT
+#
+# deploy-agent:
+#   needs: [changes, detect-changed-agents]
+#   if: needs.changes.outputs.agents == 'true' && needs.detect-changed-agents.outputs.matrix != '{"agent":[]}'
+#   strategy:
+#     matrix: ${{ fromJson(needs.detect-changed-agents.outputs.matrix) }}
+#     fail-fast: false   # one agent failing doesn't block others
+#   runs-on: ubuntu-latest
+#   steps:
+#     - uses: actions/checkout@v4
+#     - name: Build + push ${{ matrix.agent }}
+#       uses: docker/build-push-action@v5
+#       with:
+#         context: ./agents
+#         file:    ./agents/src/agents/${{ matrix.agent }}/Dockerfile
+#         tags:    ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ matrix.agent }}:${{ github.sha }}
+#         push: true
+#         cache-from: type=gha
+#         cache-to:   type=gha,mode=max
+#     - name: Deploy ${{ matrix.agent }} to Cloud Run
+#       run: |
+#         gcloud run deploy ${{ matrix.agent }}-agent \
+#           --image="${{ env.REGION }}-docker.pkg.dev/..." \
+#           --region=${{ env.REGION }} ...

@@ -17,7 +17,10 @@ node_modules/
 dist/
 build/
 
-# Credentials
-*.json
+# Credentials — block service account key files only
+# Do NOT block package.json, tsconfig.json, firebase.json, etc.
+*-credentials.json
+*-key.json
+*-keyfile.json
 cred_keys/
 uv.lock

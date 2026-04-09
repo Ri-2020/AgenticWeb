@@ -1,0 +1,15 @@
+{
+  "name": "agenthub-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CI/CD helper scripts for AgentHub",
+  "scripts": {
+    "register": "node register-agents.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

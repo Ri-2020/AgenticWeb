@@ -1,0 +1,95 @@
+{
+  "shopping": {
+    "name": "Shopping Assistant",
+    "description": "Find and compare the best products across Amazon, Flipkart, and more.",
+    "icon": "ShoppingCart",
+    "color": "#3B82F6",
+    "status": "active",
+    "outputType": "product_grid",
+    "inputFields": [
+      {
+        "name": "query",
+        "label": "What are you looking for?",
+        "type": "text",
+        "placeholder": "e.g. wireless earbuds under ₹2000 with good bass",
+        "required": true
+      },
+      {
+        "name": "country",
+        "label": "Country",
+        "type": "select",
+        "options": ["India", "United States", "United Kingdom"],
+        "default": "India",
+        "required": true
+      }
+    ],
+    "steps": [
+      "Analyzing requirements",
+      "Building search queries",
+      "Searching marketplaces",
+      "Analyzing products",
+      "Generating recommendations"
+    ]
+  },
+  "research": {
+    "name": "Research Assistant",
+    "description": "Deep-dive research on any topic with structured findings and citations.",
+    "icon": "Search",
+    "color": "#8B5CF6",
+    "status": "active",
+    "outputType": "research_report",
+    "inputFields": [
+      {
+        "name": "topic",
+        "label": "Research topic",
+        "type": "text",
+        "placeholder": "e.g. Impact of AI on healthcare in 2025",
+        "required": true
+      }
+    ],
+    "steps": [
+      "Planning research strategy",
+      "Searching sources",
+      "Synthesizing findings",
+      "Generating report"
+    ]
+  },
+  "trip_planner": {
+    "name": "Trip Planner",
+    "description": "Create a detailed day-by-day travel itinerary for any destination.",
+    "icon": "Map",
+    "color": "#10B981",
+    "status": "active",
+    "outputType": "itinerary",
+    "inputFields": [
+      {
+        "name": "destination",
+        "label": "Destination",
+        "type": "text",
+        "placeholder": "e.g. Tokyo, Japan",
+        "required": true
+      },
+      {
+        "name": "duration",
+        "label": "Duration (days)",
+        "type": "number",
+        "placeholder": "e.g. 7",
+        "required": true
+      },
+      {
+        "name": "interests",
+        "label": "Interests / travel style",
+        "type": "text",
+        "placeholder": "e.g. food, culture, budget travel",
+        "required": false
+      }
+    ],
+    "steps": [
+      "Understanding preferences",
+      "Researching destination",
+      "Planning daily itinerary",
+      "Adding practical tips",
+      "Finalizing plan"
+    ]
+  }
+}
