@@ -377,7 +377,7 @@ export default function Home() {
           </div>
           <h2 className="text-2xl font-bold sm:text-3xl">Ready to get started?</h2>
           <p className="mt-3 text-muted-fg max-w-md mx-auto">
-            Sign in with Google and launch your first agent in seconds. No setup required.
+            Sign in with Google and Use your first agent in seconds. No setup required.
           </p>
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
             {!user ? (
