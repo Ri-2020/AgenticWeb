@@ -17,6 +17,9 @@ node_modules/
 dist/
 build/
 
+# Personal notes — not for the repo
+INTERVIEW_*.md
+
 # Credentials — block service account key files only
 # Do NOT block package.json, tsconfig.json, firebase.json, etc.
 *-credentials.json
