@@ -18,6 +18,7 @@ import {
   Globe,
   BookOpen,
   MapPin,
+  Briefcase,
   Clock,
   CheckCircle2,
   XCircle,
@@ -37,6 +38,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string; style?:
   Bot,
   BookOpen,
   MapPin,
+  Briefcase,
 };
 
 export default function AgentPage() {
@@ -125,11 +127,24 @@ export default function AgentPage() {
   const handleSubmit = useCallback(
     async (values: Record<string, string>) => {
       if (!user || !agent) return;
-      const query = (values.query || "").trim();
-      if (!query) {
+      const rawQuery = (values.query || "").trim();
+      if (!rawQuery) {
         setError("Please enter a query before submitting.");
         return;
       }
+
+      // Compose optional structured fields as a prefix so the agent gets richer context.
+      const UNSET = "Not specified";
+      const contextParts: string[] = [];
+      if (values.current_role && values.current_role !== UNSET)
+        contextParts.push(`Role: ${values.current_role}`);
+      if (values.experience && values.experience !== UNSET)
+        contextParts.push(`Experience: ${values.experience}`);
+      if (values.goal && values.goal !== UNSET)
+        contextParts.push(`Goal: ${values.goal}`);
+      const query = contextParts.length > 0
+        ? `[${contextParts.join(" | ")}] ${rawQuery}`
+        : rawQuery;
 
       if (accessChecksEnabled) {
         if (accessLoading) return;

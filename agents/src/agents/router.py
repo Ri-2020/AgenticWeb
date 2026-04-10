@@ -15,6 +15,9 @@ from agents.research.crew import ResearchCrew
 from agents.trip_planner import METADATA as trip_planner_metadata
 from agents.trip_planner.crew import TripPlannerCrew
 
+from agents.career_driver import METADATA as career_driver_metadata
+from agents.career_driver.crew import CareerDriverCrew
+
 AGENTS: dict[str, dict[str, Any]] = {
     "shopping": {
         "crew_class": ShoppingCrew,
@@ -27,6 +30,10 @@ AGENTS: dict[str, dict[str, Any]] = {
     "trip_planner": {
         "crew_class": TripPlannerCrew,
         "metadata": trip_planner_metadata,
+    },
+    "career_driver": {
+        "crew_class": CareerDriverCrew,
+        "metadata": career_driver_metadata,
     },
 }
 

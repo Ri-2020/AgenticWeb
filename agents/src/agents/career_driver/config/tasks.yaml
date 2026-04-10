@@ -1,0 +1,124 @@
+analyze_profile:
+  description: >
+    User input: "{user_query}"
+
+    Extract a structured profile. Return a JSON object with:
+    - current_domain: e.g. "Software Engineering", "Finance", "Marketing"
+    - seniority: one of "Fresher", "Junior", "Mid", "Senior", "Lead", "Executive"
+    - years_experience: integer or null
+    - hard_skills: list of up to 8 specific skills
+    - soft_skills: list of up to 4 inferred soft skills
+    - stated_goal: what the user literally said they want
+    - inferred_goal: what they likely actually want (read between the lines)
+    - constraints: list of blockers mentioned (budget, location, family, etc.)
+    - energy_keywords: 2-3 words that describe their current state (e.g. "burned out", "curious", "ambitious")
+  expected_output: >
+    A JSON object with the structured user profile.
+  agent: profile_analyst
+
+research_market:
+  description: >
+    Target country: {country}
+
+    Using the profile extracted in the previous step, identify 4-6 relevant
+    career categories this person could realistically move into.
+
+    For each category return:
+    - category: short role family name (e.g. "Product Management", "Data Science")
+    - demand: "high" | "medium" | "low"
+    - growth_outlook: one sentence, 2-year horizon
+    - salary_range: realistic range in local currency for {country}
+    - barrier_to_entry: "low" | "medium" | "high"
+    - transferable_fit: how well the user's existing skills transfer (1-10)
+
+    Return as a JSON object with a "market_categories" list.
+  expected_output: >
+    A JSON object with market intelligence for 4-6 relevant career categories.
+  agent: market_scout
+
+design_paths:
+  description: >
+    Using the profile and market intelligence from previous steps, design
+    exactly 3 career paths for this person.
+
+    Rules:
+    - Path 1: Natural progression (advance in their current direction)
+    - Path 2: Strategic pivot (move to an adjacent, higher-leverage role)
+    - Path 3: Creative/unconventional (bold but viable alternative)
+    - Each path must be meaningfully different — no overlap
+    - Titles must be specific job roles, not vague categories
+      (e.g. "Engineering Manager at a Series B startup" not "Management")
+
+    Return a JSON object with a "paths" list, each containing:
+    - title: specific role or track
+    - summary: 2 sentences max — what the role is and why it suits them
+    - rationale: 1 sentence on why this path fits their background
+  expected_output: >
+    A JSON object with 3 designed career paths including title, summary, and rationale.
+  agent: path_architect
+
+evaluate_feasibility:
+  description: >
+    Evaluate each of the 3 designed career paths against the user's profile.
+
+    For each path add:
+    - fit_score: integer 1-10 (how well this path matches their background + goal)
+    - time_to_transition: realistic estimate (e.g. "3–6 months", "12–18 months")
+    - required_skills: list of up to 5 specific skills they need to acquire
+    - pros: list of exactly 3 short phrases (real advantages for this person)
+    - cons: list of exactly 3 short phrases (honest drawbacks for this person)
+
+    Also identify:
+    - top_recommendation: title of the path with the best fit_score
+    - recommendation_reason: 1 sentence explaining the pick
+
+    Return as a JSON object with the enriched paths list and top_recommendation.
+  expected_output: >
+    A JSON object with all 3 paths scored, enriched with pros/cons and skills,
+    plus a top_recommendation field.
+  agent: feasibility_analyst
+
+build_action_plan:
+  description: >
+    Produce the final career report as a single JSON object.
+
+    For each of the 3 evaluated paths, add a "steps" list of max 4 items.
+    Each step must be:
+    - Specific enough to act on immediately (include tool/platform/cert name where relevant)
+    - Time-bounded (e.g. "4 weeks", "2 months")
+    - Ordered logically (foundational steps before advanced ones)
+
+    Bad step: "Learn Python"
+    Good step: "Complete 'Python for Everybody' on Coursera and build one portfolio project (6 weeks)"
+
+    Also add to the root:
+    - current_profile: 1 sentence describing who this person is right now
+    - target_market: {country}
+
+    Return this exact JSON structure:
+    {{
+      "current_profile": "...",
+      "target_market": "...",
+      "paths": [
+        {{
+          "title": "...",
+          "summary": "...",
+          "fit_score": 8,
+          "salary_range": "...",
+          "time_to_transition": "...",
+          "required_skills": ["skill1", "skill2"],
+          "steps": [
+            {{"order": 1, "action": "...", "duration": "..."}},
+            {{"order": 2, "action": "...", "duration": "..."}}
+          ],
+          "pros": ["...", "...", "..."],
+          "cons": ["...", "...", "..."]
+        }}
+      ],
+      "top_recommendation": "..."
+    }}
+  expected_output: >
+    A complete JSON career report with 3 paths, each with action steps,
+    fit scores, salary ranges, pros, cons, and a top recommendation.
+  output_json: CareerPaths
+  agent: action_planner
