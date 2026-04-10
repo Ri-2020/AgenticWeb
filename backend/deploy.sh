@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# need deploy
 
 # ============================================================
 # Deploy backend Cloud Function (create_job)

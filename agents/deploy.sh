@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# need deploy
 set -euo pipefail
 
 # ============================================================
