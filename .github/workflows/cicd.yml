@@ -39,8 +39,8 @@
 #
 # GCP service account minimum roles:
 #   Cloud Run Admin, Cloud Functions Admin, Cloud Build Editor,
-#   Artifact Registry Writer, Pub/Sub Editor, Firebase Admin,
-#   Service Account User
+#   Artifact Registry Admin (Writer is not enough — repo create/describe needs Admin),
+#   Pub/Sub Editor, Firebase Admin, Service Account User
 # ============================================================
 
 name: CI/CD
@@ -236,17 +236,36 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      # Ensure Artifact Registry repository exists
+      # Ensure Artifact Registry repository exists.
+      # Requires roles/artifactregistry.admin on the SA — Writer alone cannot
+      # describe or create repositories.
       - name: Ensure Artifact Registry repo
         run: |
-          gcloud artifacts repositories describe ${{ env.AR_REPO }} \
-            --project=${{ env.PROJECT_ID }} \
-            --location=${{ env.REGION }} >/dev/null 2>&1 \
-          || gcloud artifacts repositories create ${{ env.AR_REPO }} \
+          if gcloud artifacts repositories describe ${{ env.AR_REPO }} \
                --project=${{ env.PROJECT_ID }} \
-               --repository-format=docker \
                --location=${{ env.REGION }} \
-               --description="AgentHub Docker images"
+               --format="value(name)" >/dev/null 2>&1; then
+            echo "✅ Artifact Registry repo '${{ env.AR_REPO }}' already exists."
+          else
+            echo "Repository not found — attempting to create..."
+            if ! gcloud artifacts repositories create ${{ env.AR_REPO }} \
+                   --project=${{ env.PROJECT_ID }} \
+                   --repository-format=docker \
+                   --location=${{ env.REGION }} \
+                   --description="AgentHub Docker images"; then
+              echo ""
+              echo "❌ PERMISSION_DENIED: The service account cannot create the Artifact Registry repo."
+              echo "   Fix: grant roles/artifactregistry.admin to the deployer SA once:"
+              echo ""
+              echo "   gcloud projects add-iam-policy-binding ${{ env.PROJECT_ID }} \\"
+              echo "     --member='serviceAccount:github-actions-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com' \\"
+              echo "     --role='roles/artifactregistry.admin'"
+              echo ""
+              echo "   Then re-run this workflow. The repo only needs to be created once."
+              exit 1
+            fi
+            echo "✅ Artifact Registry repo '${{ env.AR_REPO }}' created."
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
