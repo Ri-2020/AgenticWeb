@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# regietering agents scrpt updated
 
 # ============================================================
 # Deploy unified agent platform
