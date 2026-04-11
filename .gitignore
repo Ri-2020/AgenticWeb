@@ -26,4 +26,4 @@ INTERVIEW_*.md
 *-key.json
 *-keyfile.json
 cred_keys/
-uv.lock
+# uv.lock is intentionally tracked — Docker builds depend on it for reproducible installs

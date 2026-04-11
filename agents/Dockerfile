@@ -10,15 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 RUN pip install --no-cache-dir uv
 
-# Copy dependency files first (layer cache)
+# Copy dependency files first (layer cache — uv.lock must be committed to git)
 COPY pyproject.toml uv.lock ./
 
 # Copy source so uv can build the local package
 COPY src/ ./src/
 
-# Sync exact versions from lock file into a venv at /app/.venv
-# --extra cloud pulls in gunicorn + firestore
-# --no-dev skips dev-only dependencies
+# Sync exact pinned versions from the lock file.
+# --extra cloud pulls in gunicorn + firestore; --no-dev skips dev-only deps.
 RUN uv sync --frozen --no-dev --extra cloud
 
 # Copy knowledge files (crewAI agent knowledge bases)
