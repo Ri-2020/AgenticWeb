@@ -298,7 +298,7 @@ jobs:
             --timeout=600 \
             --min-instances=0 \
             --max-instances=5 \
-            --startup-cpu-boost \
+            --cpu-boost \
             --set-env-vars="^|^GCP_PROJECT_ID=${{ env.PROJECT_ID }}\
           |GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}\
           |SERPER_API_KEY=${{ secrets.SERPER_API_KEY }}\
